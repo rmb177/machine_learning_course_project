@@ -1,0 +1,135 @@
+---
+title: "Analysis of Weight Training Technique"
+output: html_document
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(gridExtra)
+library(randomForest)
+library(grid)
+```
+
+### Purpose
+The purpose of this project is to develop a machine learning algorithm to predict whether or not an exercise was performed correctly by the person doing the exercise. 
+
+### The Data Set
+The training data for this study can be found at the following url:
+    https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Participants in the study wore accelerometers on three different parts of their body. An accelerometer was also attached to the dumbbell the participants used. The test data contain information from these accelerometers along with information about the test subjects and exercise sequence data. There are 159 factors provided along with the "classe" variable that indicates whether or not the exercise was performed correctly.
+
+### Exploratory Analysis and Preprocessing
+I first set a seed to allow for reproducibility of our code and then read in the training data set.
+
+```{r, readInData}
+set.seed(34)
+rawData = read.csv("pml-training.csv", header=TRUE, na.string=c("", "NA"))
+numRows <- nrow(rawData)
+```
+
+Review of the data set in a spreadsheet program showed that there were a large number of factors that had "N/A" or empty values. I ran the following function to find columns with a large percentage of these missing values.
+
+```{r, getPercentNA}
+columnsPercentNA <- apply(rawData, 2, function(x) 
+{
+    sum(is.na(x)) / numRows
+})
+```
+
+The results of this function indicated that over half of the columns had over 95% of their values missing. Because of the large number of missing values, I did not think it made sense to try and impute missing values and so eliminated these columns.
+
+```{r, removeNAColumns}
+cleanData <- rawData[-(which(columnsPercentNA > .95))]
+```
+
+I then removed the columns that provided user information and exercise sequence data since this data would not be relevant for predicting correct exercise technique.
+
+```{r, removeNonEssentialData}
+cleanData <- cleanData[-c(1:7)]
+```
+
+The dataset now consisted of 52 factors we could potentially use to predict (in)correct exercise technique.  I then graphed some of the factors to see if I could determine any other factors I might be able to eliminate. However, a typical graph of a factor looked like the following and didn't provide a clear indication of the importance of the factor for classification:
+
+```{r, exploratoryGraphFactor}
+qplot(classe, gyros_arm_y, data=cleanData, main="Gyros Arm Y vs. Classe")
+```
+
+
+### Machine Learning Algorithm
+Because of the large number of parameters and the difficulty of manually determining relevant factors, I decided to include all of the factors in my algorithm.
+
+To prepare for training, I separated the test set itself into a training set and test set. This would allow me to cross-validate the algorithm before running it against the final testing set.
+
+```{r, createTrainingTestSet}
+inTrain <- createDataPartition(y=cleanData$classe, p=0.6, list=FALSE)
+training <- cleanData[inTrain,]
+testing <- cleanData[-inTrain,]
+```
+
+I chose to use a random forest algorithm because of it's known ability for obtaining accuracy. I also included cross-validation within the algorithm with a k-fold value of 5.
+
+```{r, trainAlgorithm, warning=FALSE, cache=TRUE}
+rfModel <- train(classe ~ .,
+                 data=training,
+                 method="rf",
+                 trControl=trainControl(method="cv",number=5),
+                 prox=TRUE,
+                 allowParallel=TRUE)
+```
+
+### Algorithm Analysis
+Outputting the results of our model shows the following information:
+```{r, outputModel, warning=FALSE}
+rfModel
+```
+
+It appears the algorithm can expect an accuracy of around 98%. When we validate the algorithm against the testing set we partitioned out of the training data we get the following results:
+
+```{r, testOnTrainingTestSet}
+trainingSetPred <- predict(rfModel, testing)
+testing$predRight <- trainingSetPred == testing$classe
+table(trainingSetPred, testing$classe)
+```
+
+This translates into an accuracy of 99.3%. This is an excellent rate although is is assumed the accuracy rate for the final test set will be lower because of random noise.
+
+If we dig a little deeper into the algorithm, we can look at the four most import factors for classification as determined by the algorithm:
+```{r, importance}
+sortedIndices = sort.int(rfModel$finalModel$importance, index.return=TRUE, decreasing=TRUE)
+head(rfModel$finalModel$importance[sortedIndices$ix,], n=4)
+```
+
+Also, although the algorithm uses a large number of trees, we can look at a single tree to get an idea of significant values for these factors. Below I list and graph the two most important factors. From the graphs, it appears the Roll Belt factor was useful for predicting exercises of classe "E" and the Pitch Forearm factor was useful for predicting exercises of classe "A."
+
+```{r, aTree}
+getTree(rfModel$finalModel, k=2)[c(1,2), ]
+```
+
+
+```{r, plotImportantFactors}
+p <- qplot(classe, roll_belt, data=cleanData, main="Roll Belt vs. Classe")
+p + geom_hline(yintercept = 130.5)
+
+p <- qplot(classe, pitch_forearm, data=cleanData, main="Pitch Forearm vs. Classe")
+p + geom_hline(yintercept = -34.0)
+```
+
+
+### Final Testing of Algorithm
+Finally, I read in the final test data set, predicted the values using my algorithm, and submitted the answers to the Coursera project site:
+
+```{r, finalTest}
+finalTestData = read.csv("pml-testing.csv", header=TRUE, na.string=c("", "NA"))
+predict(rfModel, finalTestData)
+```
+
+These prediction all turned out to be correct. With a larger testing set, I would expect the error rate to trend downward under 98% as predicted above.
+
+
+
+
+
+
